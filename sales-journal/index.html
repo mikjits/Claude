@@ -315,7 +315,6 @@ const GTYPES = {milestones:'Milestones checklist', sales:'Sales $ (auto from dai
 const YTYPES = {sales:'Sales $ (auto)', calls:'Calls (auto)', number:'Custom number'};
 const DOW1 = ['S','M','T','W','T','F','S'];
 const PROMPTS = ['One small thing you’re grateful for, now or in the past.','A challenge you’re facing that you can be grateful for.','Future gratitude: what in your future can you be grateful for now?','Stream of consciousness — write whatever comes up.','What would make tomorrow a 10?','Where did you gain or lose energy today, and why?'];
-const Q_DAYS = 84;
 
 /* ================= state ================= */
 const KEY = 'momentum.v2';
@@ -356,8 +355,28 @@ const fmtVal = (type,n) => type==='sales' ? fmtMoney(n) : (Math.round(n*100)/100
 const curYear = () => S.years[S.years.length-1] || null;
 const yearById = id => S.years.find(y=>y.id===id);
 const qById = id => S.quarters.find(q=>q.id===id);
-const qEnd = q => addDays(q.start, Q_DAYS);
-const qLast = q => addDays(q.start, Q_DAYS-1);
+const qWeeks = q => +(q?.weeks) || 12;
+const qDays = q => qWeeks(q)*7;
+const qEnd = q => addDays(q.start, qDays(q));
+const qLast = q => addDays(q.start, qDays(q)-1);
+const MONTHN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function monthsOf(q){
+  const n=qWeeks(q), g=[];
+  for(let w=0; w<n; w++){ const mid=parseK(addDays(wStart(q,w),3)); const key=mid.getFullYear()*12+mid.getMonth();
+    if(g.length && g[g.length-1].key===key) g[g.length-1].weeks.push(w); else g.push({key, name:MONTHN[mid.getMonth()], weeks:[w]}); }
+  while(g.length>1 && g[0].weeks.length<2){ g[1].weeks=g[0].weeks.concat(g[1].weeks); g.shift(); }
+  while(g.length>1 && g[g.length-1].weeks.length<2){ const l=g.pop(); g[g.length-1].weeks=g[g.length-1].weeks.concat(l.weeks); }
+  while(g.length>3){ if(g[0].weeks.length<=g[g.length-1].weeks.length){ g[1].weeks=g[0].weeks.concat(g[1].weeks); g.shift(); } else { const l=g.pop(); g[g.length-1].weeks=g[g.length-1].weeks.concat(l.weeks); } }
+  return g.map(x=>({name:x.name, weeks:x.weeks, first:x.weeks[0], last:x.weeks[x.weeks.length-1]}));
+}
+const monthIdx = (q,w) => Math.max(0, monthsOf(q).findIndex(m=>m.weeks.includes(w)));
+const mLabel = (q,m) => { const M=monthsOf(q)[m]; return `${M.name} · weeks ${M.first+1}–${M.last+1}`; };
+function suggestWeeks(start){
+  const d=parseK(start); let best=13, bestDiff=99;
+  for(let i=0;i<5;i++){ const qm=Math.floor(d.getMonth()/3)*3+2+i*3; const end=new Date(d.getFullYear(), qm+1, 0); const w=Math.round((diffDays(start,keyOf(end))+1)/7);
+    if(w>=11 && w<=14 && Math.abs(w-13)<bestDiff){ best=w; bestDiff=Math.abs(w-13); } }
+  return best;
+}
 const curQuarter = () => S.quarters[S.quarters.length-1] || null;
 const quartersOf = y => S.quarters.filter(q=>q.yearId===y.id);
 const qFor = k => S.quarters.find(q=>k>=q.start && k<qEnd(q)) || null;
@@ -391,12 +410,12 @@ function habitWeekCount(q,w,id){ let n=0; for(let i=0;i<7;i++){ if(peek(addDays(
 function habitStreak(h){
   const t=todayK();
   if(+h.perWeek>=7){ let k=t,n=0; if(!peek(k)?.habits?.[h.id]) k=addDays(k,-1); while(peek(k)?.habits?.[h.id]){ n++; k=addDays(k,-1); } return {n,unit:'day'}; }
-  const q=qFor(t)||curQuarter(); if(!q) return {n:0,unit:'week'}; let w=Math.min(11,weekIdx(q,t)), n=0;
+  const q=qFor(t)||curQuarter(); if(!q) return {n:0,unit:'week'}; let w=Math.min(qWeeks(q)-1,weekIdx(q,t)), n=0;
   if(habitWeekCount(q,w,h.id)<h.perWeek) w--;
   while(w>=0 && habitWeekCount(q,w,h.id)>=h.perWeek){ n++; w--; }
   return {n,unit:'week'};
 }
-function habitQuarterPct(q,h){ const t=todayK(); const weeks=Math.min(12,Math.max(1,weekIdx(q,t<qEnd(q)?t:qLast(q))+1)); let done=0; for(let w=0;w<weeks;w++) done+=Math.min(habitWeekCount(q,w,h.id),h.perWeek); return h.perWeek?done/(weeks*h.perWeek):0; }
+function habitQuarterPct(q,h){ const t=todayK(); const weeks=Math.min(qWeeks(q),Math.max(1,weekIdx(q,t<qEnd(q)?t:qLast(q))+1)); let done=0; for(let w=0;w<weeks;w++) done+=Math.min(habitWeekCount(q,w,h.id),h.perWeek); return h.perWeek?done/(weeks*h.perWeek):0; }
 const streakTxt = st => st.n ? `<span class="streak">🔥 ${st.n} ${st.unit}${st.n>1?'s':''}</span>` : '';
 const wrev = (q,w) => S.reviews.weeks[q.id]?.[w];
 const mrev = (q,m) => S.reviews.months[q.id]?.[m];
@@ -414,7 +433,7 @@ const reviewReady = (q,w) => new Date() >= dueAt(q,w);
 function pendingReview(){
   const q=curQuarter(); if(!q||q.closed) return null;
   const now=new Date();
-  for(let w=0; w<12; w++){
+  for(let w=0; w<qWeeks(q); w++){
     const d=dueAt(q,w); if(d>now) break;
     if(q.createdAt && d.getTime() < q.createdAt) continue;
     if(!wrev(q,w)?.done) return {q,w};
@@ -432,21 +451,21 @@ function dueItems(){
   const out=[], t=todayK();
   if(!S.years.length) return [{href:'#/plan/year', t:'Set your year', s:'Start with your vision and yearly goals'}];
   const y=curYear(), q=curQuarter();
-  if(S.draft) return [{href:`#/plan/${S.draft.kind}`, t:`Finish planning your ${S.draft.kind==='year'?'year':'next 12 weeks'}`, s:'You have a plan in progress'}];
+  if(S.draft) return [{href:`#/plan/${S.draft.kind}`, t:`Finish planning your ${S.draft.kind==='year'?'year':'next quarter'}`, s:'You have a plan in progress'}];
   if(y.closed) return [{href:'#/plan/year', t:'Set next year’s goals', s:'Your year is complete'}];
-  if(!q || q.yearId!==y.id) return [{href:'#/plan/quarter', t:'Plan your first 12 weeks', s:'Pick 3 goals and your habits'}];
+  if(!q || q.yearId!==y.id) return [{href:'#/plan/quarter', t:'Plan your first quarter', s:'Pick 3 goals and your habits'}];
   const st=qState(q);
-  if(st==='ended') out.push({href:`#/review/quarter/${q.id}`, t:'Your 12 weeks are complete', s:'Review the quarter, then set next quarter’s goals'});
+  if(st==='ended') out.push({href:`#/review/quarter/${q.id}`, t:'Your quarter is complete', s:'Review the quarter, then set next quarter’s goals'});
   if(st==='closed'){
     if(quartersOf(y).length>=4) out.push({href:`#/review/year/${y.id}`, t:'Your year is complete', s:'Review the year and set next year’s goals'});
-    else out.push({href:'#/plan/quarter', t:'Plan your next 12 weeks', s:'Set next quarter’s 3 goals'});
+    else out.push({href:'#/plan/quarter', t:'Plan your next quarter', s:'Set next quarter’s 3 goals'});
   }
   if(st==='active'||st==='ended'){
-    const cw=Math.min(11, weekIdx(q, t<qEnd(q)?t:qLast(q)));
+    const cw=Math.min(qWeeks(q)-1, weekIdx(q, t<qEnd(q)?t:qLast(q))), MS=monthsOf(q);
     for(let w=0; w<=cw; w++){ if(reviewReady(q,w) && !wrev(q,w)?.done){ out.push({href:`#/review/week/${q.id}/${w}`, t:`Week ${w+1} review is ready`, s:'Get clear, get current, rate your week'}); break; } }
-    for(let m=0; m<=Math.floor(cw/4); m++){ if(wrev(q,m*4+3)?.done && !mrev(q,m)?.done){ out.push({href:`#/review/month/${q.id}/${m}`, t:`Month ${m+1} reflection`, s:'Look back on 4 weeks, then adjust'}); break; } }
-    const m=Math.floor(cw/4);
-    if(st==='active' && !planOK(mrev(q,m))) out.push({href:`#/review/month/${q.id}/${m}`, t:`Plan month ${m+1} of 3`, s:`Set your focus for weeks ${m*4+1}–${m*4+4}`, info:true});
+    const m=monthIdx(q,cw);
+    for(let mm=0; mm<=m; mm++){ if(wrev(q,MS[mm].last)?.done && !mrev(q,mm)?.done){ out.push({href:`#/review/month/${q.id}/${mm}`, t:`${MS[mm].name} reflection`, s:`Look back on ${MS[mm].weeks.length} weeks, then adjust`}); break; } }
+    if(st==='active' && !planOK(mrev(q,m))) out.push({href:`#/review/month/${q.id}/${m}`, t:`Plan ${MS[m].name}`, s:`Set your focus for weeks ${MS[m].first+1}–${MS[m].last+1}`, info:true});
   }
   return out;
 }
@@ -529,7 +548,7 @@ const go = h => { if(location.hash===h) render(); else location.hash=h; };
 function vWelcome(){
   return `<div class="wiz" style="padding-top:24px">
     <h1>Welcome to Momentum</h1>
-    <p class="sub">Set your year, plan 12 weeks at a time, and track the daily habits, calls and sales that get you there.</p>
+    <p class="sub">Set your year, plan one quarter (12–13 weeks) at a time, and track the daily habits, calls and sales that get you there.</p>
     <section class="card"><label class="f" for="w-name" style="margin-top:0">What should we call you?</label>
       <input id="w-name" type="text" autocomplete="given-name" data-enter="welcome">
       <div class="wiz-nav"><button class="btn" data-action="welcome">Get started</button></div></section>
@@ -577,18 +596,19 @@ function planYear(D){
   return `<div class="wiz">${stepsBar(2,D.step)}${body}${wizNav(D.step,1,'Set my year →')}</div>`;
 }
 function planQuarter(D){
+  if(D.weeksAuto!==false) D.weeks=suggestWeeks(D.start);
   const y=yearById(D.yearId), qn=quartersOf(y).length+1;
   const ygOpts=g=>`<option value="">— none —</option>`+y.goals.map(yg=>`<option value="${yg.id}" ${g.yearGoal===yg.id?'selected':''}>${esc(yg.title||'Untitled')}</option>`).join('');
   const head=(s,t,sub)=>`<p class="hint" style="margin:0">Quarter ${qn} of 4 · Step ${s} of 4</p><h1>${t}</h1><p class="sub">${sub}</p>`;
   let body='';
-  if(D.step===0) body=head(1,'Your 3 goals for the next 12 weeks','What are the three most important goals to achieve over the next 12 weeks to stay on track for the year? Goal 1 is the most important.')+
+  if(D.step===0) body=head(1,'Your 3 goals for this quarter','What are the three most important goals to achieve this quarter to stay on track for the year? Goal 1 is the most important.')+
     D.goals.map((g,i)=>`<div class="gslot"><div class="gh"><span class="num">${i+1}</span>Goal ${i+1}${i>0?`<span class="spacer"></span><button class="link" data-action="dq-move" data-i="${i}">↑ Rank up</button>`:''}</div>
       <input type="text" data-path="draft.goals.${i}.title" value="${esc(g.title)}" placeholder="${['e.g. Close $60,000 in sales','e.g. Make 1,200 calls','e.g. Launch a referral program'][i]}" aria-label="Goal ${i+1}">
       <div class="grid2"><div><label class="f">Track progress by</label><select data-path="draft.goals.${i}.type" data-rerender>${Object.entries(GTYPES).map(([k,l])=>`<option value="${k}" ${g.type===k?'selected':''}>${l}</option>`).join('')}</select></div>
-      ${g.type!=='milestones'?`<div><label class="f">12-week target</label><input type="text" inputmode="decimal" data-path="draft.goals.${i}.target" value="${esc(g.target)}" placeholder="${g.type==='sales'?'60000':'1200'}"></div>`:'<div></div>'}</div>
+      ${g.type!=='milestones'?`<div><label class="f">Quarter target</label><input type="text" inputmode="decimal" data-path="draft.goals.${i}.target" value="${esc(g.target)}" placeholder="${g.type==='sales'?'60000':'1200'}"></div>`:'<div></div>'}</div>
       <label class="f">Supports yearly goal</label><select data-path="draft.goals.${i}.yearGoal">${ygOpts(g)}</select>
       <label class="f">Why does it matter?</label><input type="text" data-path="draft.goals.${i}.why" value="${esc(g.why)}"></div>`).join('');
-  else if(D.step===1) body=head(2,'Plan it out','What tasks, milestones and resources does each goal need over the next 12 weeks? Add a target week if you like. You’ll check them off as you go.')+
+  else if(D.step===1) body=head(2,'Plan it out','What tasks, milestones and resources does each goal need this quarter? Add a target week if you like. You’ll check them off as you go.')+
     D.goals.map((g,i)=>!g.title.trim()?'':`<div class="gslot"><div class="gh"><span class="num">${i+1}</span>${esc(g.title)}</div>
       ${(g.milestones||[]).map((m,j)=>`<div class="item"><input type="text" data-path="draft.goals.${i}.milestones.${j}.text" value="${esc(m.text)}"><input type="text" style="width:80px;flex:none" data-path="draft.goals.${i}.milestones.${j}.week" value="${esc(m.week||'')}" placeholder="Week #" inputmode="numeric" aria-label="Target week"><button class="x" data-action="dm-del" data-i="${i}" data-j="${j}" aria-label="Remove">×</button></div>`).join('')}
       <div class="addrow"><input type="text" id="dm-new-${i}" placeholder="Add a milestone or task" data-enter="dm-add" data-i="${i}"><button class="btn sm ghost" data-action="dm-add" data-i="${i}">Add</button></div>
@@ -596,12 +616,13 @@ function planQuarter(D){
   else if(D.step===2) body=head(3,'Your habits','Which daily actions will move you toward these goals? Set how many days a week you’re aiming for.')+
     `<section class="card">${D.habits.map((h,i)=>`<div class="item ${h.keep?'':'done'}"><input type="checkbox" data-path="draft.habits.${i}.keep" ${h.keep?'checked':''} data-rerender aria-label="Keep this habit"><input type="text" data-path="draft.habits.${i}.name" value="${esc(h.name)}"><input class="hgoal" type="number" min="1" max="7" data-path="draft.habits.${i}.perWeek" value="${h.perWeek}" aria-label="Days per week"><span class="hint" style="margin:0">/wk</span></div>`).join('')||'<p class="empty">No habits yet.</p>'}
       <div class="addrow"><input type="text" id="dh-new" placeholder="e.g. Meditate 10 minutes" data-enter="dh-add"><button class="btn sm ghost" data-action="dh-add">Add</button></div></section>`;
-  else body=head(4,'Ready to commit?','For the next 12 weeks you’re committing to the daily actions that move you closer to these goals — and to the person you know you can be.')+
+  else body=head(4,'Ready to commit?','For this quarter you’re committing to the daily actions that move you closer to these goals — and to the person you know you can be.')+
     `<section class="card">${D.goals.filter(g=>g.title.trim()).map((g,i)=>`<div class="item"><span class="num">${i+1}</span><span class="txt"><b>${esc(g.title)}</b><br><span class="hint">${GTYPES[g.type]}${g.type!=='milestones'&&g.target?` · target ${fmtVal(g.type,money(g.target))}`:''} · ${(g.milestones||[]).length} milestones</span></span></div>`).join('')}
       <div class="item"><span class="txt">${D.habits.filter(h=>h.keep&&h.name.trim()).map(h=>`<span class="tag ok" style="margin:0 4px 4px 0;display:inline-block">${esc(h.name)} · ${h.perWeek}/wk</span>`).join('')||'<span class="hint">No habits</span>'}</span></div>
-      <label class="f">Start date</label><input type="date" data-path="draft.start" data-rerender value="${esc(D.start)}">
-      <p class="hint" style="margin:8px 0 0">Runs 12 weeks: ${fmtShort(D.start)} – ${fmtShort(addDays(D.start,Q_DAYS-1))}</p></section>`;
-  return `<div class="wiz">${stepsBar(4,D.step)}${body}${wizNav(D.step,3,'Start my 12 weeks →')}</div>`;
+      <div class="grid2"><div><label class="f">Start date</label><input type="date" data-path="draft.start" data-rerender value="${esc(D.start)}"></div>
+      <div><label class="f">Length</label><select data-path="draft.weeks" data-num data-rerender>${[11,12,13,14].map(n=>`<option value="${n}" ${+D.weeks===n?'selected':''}>${n} weeks${n===suggestWeeks(D.start)?' (matches calendar)':''}</option>`).join('')}</select></div></div>
+      ${(()=>{ const fq={start:D.start, weeks:D.weeks}; return `<p class="hint" style="margin:10px 0 0">${fmtShort(D.start)} – ${fmtShort(qLast(fq))} · ${monthsOf(fq).map(M=>`${M.name} (${M.weeks.length} wks)`).join(' · ')}</p>`; })()}</section>`;
+  return `<div class="wiz">${stepsBar(4,D.step)}${body}${wizNav(D.step,3,'Start my quarter →')}</div>`;
 }
 
 /* ================= today ================= */
@@ -611,8 +632,8 @@ function vToday({k}){
   let hero='';
   if(q){
     const dn=diffDays(q.start,k)+1, y=yearById(q.yearId);
-    const label = dn<1?`Starts in ${1-dn} day${1-dn===1?'':'s'}` : dn>Q_DAYS?'12 weeks complete' : `Week ${qw+1} of 12 · Day ${dn} of 84`;
-    hero=`<div class="hero">${ring(Math.max(0,Math.min(1,dn/Q_DAYS)),70,7, inQ?`W${qw+1}`:dn<1?'—':'✓')}<div style="flex:1;min-width:0"><h1>${k===t?'Today':fmtLong(k)}</h1><p>${k===t?fmtLong(k)+'<br>':''}Year ${S.years.indexOf(y)+1} · Quarter ${qNum(q)} · ${label}</p>
+    const label = dn<1?`Starts in ${1-dn} day${1-dn===1?'':'s'}` : dn>qDays(q)?'Quarter complete' : `${monthsOf(q)[monthIdx(q,qw)].name} · Week ${qw+1} of ${qWeeks(q)} · Day ${dn} of ${qDays(q)}`;
+    hero=`<div class="hero">${ring(Math.max(0,Math.min(1,dn/qDays(q))),70,7, inQ?`W${qw+1}`:dn<1?'—':'✓')}<div style="flex:1;min-width:0"><h1>${k===t?'Today':fmtLong(k)}</h1><p>${k===t?fmtLong(k)+'<br>':''}Year ${S.years.indexOf(y)+1} · Quarter ${qNum(q)} · ${label}</p>
       <div class="daynav"><a href="#/today/${addDays(k,-1)}" aria-label="Previous day">${I.left}</a>${k!==t?'<a href="#/today">Back to today</a>':''}<a href="#/today/${addDays(k,1)}" aria-label="Next day">${I.right}</a></div></div></div>`;
   }
   const habits=q?q.habits:[];
@@ -621,7 +642,7 @@ function vToday({k}){
   const wk = qw!=null ? [wStart(q,qw), addDays(wStart(q,qw),7)] : null;
   const pace=(type,cls)=>{ if(!wk) return ''; const g=q.goals.find(x=>x.type===type); const c=type==='sales'?salesIn(...wk):callsIn(...wk);
     if(!g||!money(g.target)) return `<div class="s">${fmtVal(type,c)} this week</div>`;
-    const per=money(g.target)/12; return `<div class="minibar ${cls}"><i style="width:${Math.min(100,c/per*100)}%"></i></div><div class="s">${fmtVal(type,c)} of ${fmtVal(type,per)} weekly pace</div>`; };
+    const per=money(g.target)/qWeeks(q); return `<div class="minibar ${cls}"><i style="width:${Math.min(100,c/per*100)}%"></i></div><div class="s">${fmtVal(type,c)} of ${fmtVal(type,per)} weekly pace</div>`; };
   return `${hero}
   ${k===t?banners(dueItems()):''}
   <div class="stats">
@@ -662,20 +683,20 @@ function vTodo(){
 
 /* ================= habits ================= */
 function vHabits(){
-  const q=curQuarter(); if(!q) return `<h1>Habits</h1><p class="sub">Plan your 12 weeks to add habits.</p><a class="btn" href="#/plan/quarter">Plan 12 weeks</a>`;
-  const t=todayK(), w=Math.max(0,Math.min(11,weekIdx(q,t))), qi=S.quarters.indexOf(q);
+  const q=curQuarter(); if(!q) return `<h1>Habits</h1><p class="sub">Plan your quarter to add habits.</p><a class="btn" href="#/plan/quarter">Plan quarter</a>`;
+  const t=todayK(), w=Math.max(0,Math.min(qWeeks(q)-1,weekIdx(q,t))), qi=S.quarters.indexOf(q);
   const days=[...Array(7)].map((_,i)=>addDays(wStart(q,w),i));
   const cards=q.habits.map((h,hi)=>{
     const pct=habitQuarterPct(q,h), wc=habitWeekCount(q,w,h.id);
-    const heat=[...Array(12)].map((_,ww)=>`<div class="col">${[...Array(7)].map((_,dd)=>{ const k=addDays(q.start,ww*7+dd); return `<i class="${k>t?'fut':peek(k)?.habits?.[h.id]?'on':''}" title="${fmtShort(k)}"></i>`; }).join('')}</div>`).join('');
+    const heat=[...Array(qWeeks(q))].map((_,ww)=>`<div class="col">${[...Array(7)].map((_,dd)=>{ const k=addDays(q.start,ww*7+dd); return `<i class="${k>t?'fut':peek(k)?.habits?.[h.id]?'on':''}" title="${fmtShort(k)}"></i>`; }).join('')}</div>`).join('');
     return `<section class="card"><div class="hcard-h"><div class="nm"><input type="text" class="plain" style="font-weight:700;font-size:16px" data-path="quarters.${qi}.habits.${hi}.name" value="${esc(h.name)}" aria-label="Habit name">
       <div class="hint" style="margin:4px 0 0">Goal <input class="hgoal" type="number" min="1" max="7" data-path="quarters.${qi}.habits.${hi}.perWeek" data-rerender value="${h.perWeek}" aria-label="Days per week"> days/week ${streakTxt(habitStreak(h))}</div></div>
       <div style="text-align:right">${ring(pct,52,6)}</div></div>
       <div class="week7">${days.map(k=>{ const on=!!peek(k)?.habits?.[h.id]; return `<div class="d7">${DOW1[parseK(k).getDay()]}<button class="${on?'on':''} ${k===t?'today':''} ${k>t?'future':''}" data-action="habit" data-k="${k}" data-id="${h.id}" aria-label="${fmtShort(k)}" aria-pressed="${on}">✓</button></div>`; }).join('')}</div>
       <div class="row" style="margin-top:10px"><span class="tag ${wc>=h.perWeek?'ok':''}">${wc}/${h.perWeek} this week${wc>=h.perWeek?' ✓':''}</span><span class="hint" style="margin:0;font-size:12px">${Math.round(pct*100)}% of target this quarter</span><span class="spacer"></span><button class="link" style="color:var(--danger)" data-action="habit-del" data-id="${h.id}">Remove</button></div>
-      <details class="more"><summary>12-week history</summary><div class="heat">${heat}</div></details></section>`;
+      <details class="more"><summary>Quarter history</summary><div class="heat" style="grid-template-columns:repeat(${qWeeks(q)},1fr)">${heat}</div></details></section>`;
   }).join('');
-  return `<h1>Habits</h1><p class="sub">Quarter ${qNum(q)} · Week ${w+1} of 12 · ${fmtShort(days[0])} – ${fmtShort(days[6])}</p>
+  return `<h1>Habits</h1><p class="sub">Quarter ${qNum(q)} · Week ${w+1} of ${qWeeks(q)} · ${fmtShort(days[0])} – ${fmtShort(days[6])}</p>
     ${cards||'<p class="empty">No habits yet.</p>'}
     <section class="card"><h2 style="margin-bottom:8px">Add a habit</h2><div class="addrow" style="margin-top:0"><input type="text" id="habit-new" placeholder="e.g. 50 push-ups" data-enter="habit-add"><input class="hgoal" type="number" id="habit-goal" min="1" max="7" value="7" aria-label="Days per week"><button class="btn sm" data-action="habit-add">Add</button></div></section>`;
 }
@@ -699,9 +720,9 @@ function vGoals(){
       <div>${ms}</div>
       <div class="addrow"><input type="text" id="ms-new-${i}" placeholder="Add a milestone" data-enter="ms-add" data-i="${i}"><button class="btn sm ghost" data-action="ms-add" data-i="${i}">Add</button></div>
       <details class="more"><summary>Why & plan</summary><div><input type="text" data-path="quarters.${qi}.goals.${i}.why" value="${esc(g.why)}" placeholder="Why it matters" style="margin-bottom:8px">${ta(`quarters.${qi}.goals.${i}.plan`,'Resources & notes')}</div></details>
-    </div></div></section>`; }).join('') : `<section class="card"><p class="empty" style="margin-bottom:10px">No active 12-week plan.</p>${banners(dueItems())}</section>`;
+    </div></div></section>`; }).join('') : `<section class="card"><p class="empty" style="margin-bottom:10px">No active quarter plan.</p>${banners(dueItems())}</section>`;
   return `<h1>Goals</h1><p class="sub">Year ${yi+1} · started ${fmtMY(y.start)}</p>
-  ${qActive?`<div class="section-title">Quarter ${qNum(q)} · ${fmtShort(q.start)} – ${fmtShort(qLast(q))}<span>${qState(q)==='active'?`Week ${weekIdx(q,t)+1} of 12`:qState(q)==='future'?'Starts '+fmtShort(q.start):'Complete'}</span></div>`:'<div class="section-title">12-week goals</div>'}
+  ${qActive?`<div class="section-title">Quarter ${qNum(q)} · ${fmtShort(q.start)} – ${fmtShort(qLast(q))}<span>${qState(q)==='active'?`Week ${weekIdx(q,t)+1} of ${qWeeks(q)}`:qState(q)==='future'?'Starts '+fmtShort(q.start):'Complete'}</span></div>`:'<div class="section-title">Quarter goals</div>'}
   ${qGoals}
   <div class="section-title">This year<a href="#/review/year/${y.id}">Year overview ›</a></div>
   <section class="card">${yGoals||'<p class="empty">No yearly goals.</p>'}<p class="hint" style="margin:12px 0 0">The tick on each bar shows where you’d be on pace for the year.</p></section>
@@ -715,16 +736,16 @@ function vReview(r){
   if(r.sub==='quarter') return vQuarterReview(qById(r.id));
   if(r.sub==='year') return vYearReview(yearById(r.id));
   const q=curQuarter(), t=todayK();
-  if(!q) return `<h1>Review</h1><p class="sub">Plan your first 12 weeks to start reviewing.</p>${banners(dueItems())}`;
+  if(!q) return `<h1>Review</h1><p class="sub">Plan your first quarter to start reviewing.</p>${banners(dueItems())}`;
   const cw=weekIdx(q,t);
-  const tl=[...Array(12)].map((_,w)=>{ const done=wrev(q,w)?.done, ready=reviewReady(q,w); const cls=done?'done':ready?'due':w>cw?'fut':''; return `<a class="wk ${cls} ${w===cw&&!q.closed?'cur':''}" href="#/review/week/${q.id}/${w}">W${w+1}<small>${done?'✓':ready?'Due':fmtShort(wStart(q,w)).replace(' ',' ')}</small></a>`; }).join('');
-  const months=[0,1,2].map(m=>{ const mr=mrev(q,m); return `<a href="#/review/month/${q.id}/${m}"><span class="num">${m+1}</span><div class="t"><b>Month ${m+1} · Weeks ${m*4+1}–${m*4+4}</b><span>${mr?.done?'Reflection complete':planOK(mr)?'Planned · reflect after week '+(m*4+4):'Set your focus for these 4 weeks'}</span></div>${mr?.done?'<span class="tag ok">Done</span>':''}<span>›</span></a>`; }).join('');
+  const tl=[...Array(qWeeks(q))].map((_,w)=>{ const done=wrev(q,w)?.done, ready=reviewReady(q,w); const cls=done?'done':ready?'due':w>cw?'fut':''; return `<a class="wk ${cls} ${w===cw&&!q.closed?'cur':''}" href="#/review/week/${q.id}/${w}">W${w+1}<small>${done?'✓':ready?'Due':fmtShort(wStart(q,w)).replace(' ',' ')}</small></a>`; }).join('');
+  const months=monthsOf(q).map((M,m)=>{ const mr=mrev(q,m); return `<a href="#/review/month/${q.id}/${m}"><span class="num">${m+1}</span><div class="t"><b>${M.name} · Weeks ${M.first+1}–${M.last+1}</b><span>${mr?.done?'Reflection complete':planOK(mr)?'Planned · reflect after week '+(M.last+1):`Set your focus for these ${M.weeks.length} weeks`}</span></div>${mr?.done?'<span class="tag ok">Done</span>':''}<span>›</span></a>`; }).join('');
   const past=S.quarters.filter(x=>x.closed && x!==q).reverse().map(x=>{ const gs=x.goals.filter(g=>g.title); const avg=gs.length?gs.reduce((a,g)=>a+goalProg(g,x).pct,0)/gs.length:0; return `<a href="#/review/quarter/${x.id}"><span class="num">Q${qNum(x)}</span><div class="t"><b>Year ${S.years.indexOf(yearById(x.yearId))+1} · ${fmtShort(x.start)} – ${fmtShort(qLast(x))}</b><span>${Math.round(avg*100)}% average goal completion</span></div><span>›</span></a>`; }).join('');
-  return `<h1>Review</h1><p class="sub">Quarter ${qNum(q)} · check in weekly, reflect every 4 weeks, review at week 12.</p>
+  return `<h1>Review</h1><p class="sub">Quarter ${qNum(q)} · check in weekly, reflect at the end of each month, review at the end of the quarter.</p>
     ${banners(dueItems())}
     <div class="section-title">Weekly reviews</div><section class="card"><div class="timeline">${tl}</div></section>
-    <div class="section-title">4-week plans & reflections</div><section class="card rlist">${months}</section>
-    <div class="section-title">Quarter & year</div><section class="card rlist"><a href="#/review/quarter/${q.id}"><span class="num">Q${qNum(q)}</span><div class="t"><b>Quarter review</b><span>${q.closed?'Complete':qState(q)==='ended'?'Ready now':'Opens after week 12 · '+fmtShort(qEnd(q))}</span></div><span>›</span></a><a href="#/review/year/${q.yearId}"><span class="num">Y</span><div class="t"><b>Year overview</b><span>${quartersOf(yearById(q.yearId)).length} of 4 quarters</span></div><span>›</span></a></section>
+    <div class="section-title">Monthly plans & reflections</div><section class="card rlist">${months}</section>
+    <div class="section-title">Quarter & year</div><section class="card rlist"><a href="#/review/quarter/${q.id}"><span class="num">Q${qNum(q)}</span><div class="t"><b>Quarter review</b><span>${q.closed?'Complete':qState(q)==='ended'?'Ready now':`Opens after week ${qWeeks(q)} · `+fmtShort(qEnd(q))}</span></div><span>›</span></a><a href="#/review/year/${q.yearId}"><span class="num">Y</span><div class="t"><b>Year overview</b><span>${quartersOf(yearById(q.yearId)).length} of 4 quarters</span></div><span>›</span></a></section>
     ${past?`<div class="section-title">Past quarters</div><section class="card rlist">${past}</section>`:''}`;
 }
 function weekSummary(q,w){
@@ -753,11 +774,11 @@ function weekSections(q,w){
   ];
 }
 function vWeekReview(q,w,lockedMode){
-  if(!q||w==null||isNaN(w)||w<0||w>11) return '<p class="empty">Review not found.</p>';
+  if(!q||w==null||isNaN(w)||w<0||w>=qWeeks(q)) return '<p class="empty">Review not found.</p>';
   const R=wrevE(q,w), p=`reviews.weeks.${q.id}.${w}`, qi=S.quarters.indexOf(q);
   const list=(arr,key)=>arr.map(([b,s],i)=>`<label class="check">${chk(`${p}.${key}.${i}`)}<div><b>${b}</b><span>${s}</span></div></label>`).join('');
   const goals=q.goals.map((g,i)=>{ if(!g.title) return ''; const pr=goalProg(g,q); const open=(g.milestones||[]).map((m,j)=>({m,j})).filter(x=>!x.m.done);
-    return `<div class="ybar"><div class="top-l">${esc(g.title)}<span>${pr.label}</span></div><div class="bar pace"><i style="width:${pr.pct*100}%"></i><b style="left:${(w+1)/12*100}%"></b></div>
+    return `<div class="ybar"><div class="top-l">${esc(g.title)}<span>${pr.label}</span></div><div class="bar pace"><i style="width:${pr.pct*100}%"></i><b style="left:${(w+1)/qWeeks(q)*100}%"></b></div>
       ${g.type==='number'?`<div class="row" style="margin-top:6px"><span class="hint" style="margin:0">Update current</span><input type="text" inputmode="decimal" style="width:110px" data-path="quarters.${qi}.goals.${i}.current" value="${esc(g.current??'')}" data-rerender-blur></div>`:''}
       ${open.slice(0,4).map(({m,j})=>`<label class="check" style="padding:6px 0 0;border:0">${chk(`quarters.${qi}.goals.${i}.milestones.${j}.done`)}<div><span style="color:var(--ink);font-size:14px">${esc(m.text)}</span>${m.week?` <span class="tag ${+m.week<=w+1?'warn':''}">Wk ${esc(m.week)}</span>`:''}</div></label>`).join('')}</div>`; }).join('');
   const habits=q.habits.map(h=>{ const n=habitWeekCount(q,w,h.id); return `<div class="item"><span class="txt">${esc(h.name)}</span><span class="tag ${n>=h.perWeek?'ok':'warn'}">${n}/${h.perWeek}${n>=h.perWeek?' ✓':''}</span></div>`; }).join('');
@@ -795,38 +816,38 @@ function vWeekReview(q,w,lockedMode){
     ${doneChips?`<div class="ci-chips" style="margin-top:14px">${doneChips}</div>`:''}`;
 }
 function monthFull(q,m){
-  const R=mrevE(q,m), p=`reviews.months.${q.id}.${m}`, weeks=[0,1,2,3].map(i=>m*4+i), t=todayK();
-  const opens=addDays(wStart(q,m*4+3),6);
-  return `<a class="link" href="#/review">‹ Review</a><h1>Month ${m+1} of 3</h1><p class="sub">Weeks ${m*4+1}–${m*4+4} · ${fmtShort(wStart(q,m*4))} – ${fmtShort(addDays(wStart(q,m*4),27))}</p>
-    <div class="section-title">Plan</div>
-    ${card('My vision for these 4 weeks','eye', ta(`${p}.focus`,'What does a great month look like?'))}
+  const MS=monthsOf(q), M=MS[m], R=mrevE(q,m), p=`reviews.months.${q.id}.${m}`, weeks=M.weeks, t=todayK();
+  const opens=addDays(wStart(q,M.last),6);
+  return `<a class="link" href="#/review">‹ Review</a><h1>${M.name}</h1><p class="sub">Month ${m+1} of ${MS.length} · weeks ${M.first+1}–${M.last+1} · ${fmtShort(wStart(q,M.first))} – ${fmtShort(addDays(wStart(q,M.last),6))}</p>
+    <div class="section-title">Plan for ${M.name}</div>
+    ${card(`My vision for ${M.name}`,'eye', ta(`${p}.focus`,'What does a great month look like?'))}
     ${card('Most important this month','star', [0,1,2].map(i=>`<div class="item"><span class="num">${i+1}</span>${inp(`${p}.top.${i}`)}</div>`).join(''))}
     ${card('Week by week','review', weeks.map((w,i)=>`<div class="item"><span class="tag">W${w+1}</span>${inp(`${p}.weekFocus.${i}`,`Focus for week of ${fmtShort(wStart(q,w))}`)}</div>`).join(''))}
     ${card('Notes','pen', ta(`${p}.notes`))}
-    <div class="section-title">4-week reflection${t<opens?`<span style="text-transform:none;letter-spacing:0;font-weight:500">best done ${fmtShort(opens)}</span>`:''}</div>
+    <div class="section-title">${M.name} reflection${t<opens?`<span style="text-transform:none;letter-spacing:0;font-weight:500">best done ${fmtShort(opens)}</span>`:''}</div>
     ${card('Life ratings','heart', `<p class="hint">Averaged from your weekly reviews. Rising, falling, or holding steady?</p>${ratingsTable(q,weeks)}`)}
-    ${card('Goals','goals', `<p class="hint">Based on your goal progress, what optimizations and priorities do you need to commit to for the next 4 weeks?</p>${ta(`${p}.optim`)}`)}
-    ${card('Habits','habits', `<p class="hint">Based on the last 4 weeks, what changes are needed to keep you on track? Should any habit be expanded or scaled back?</p>${q.habits.map(h=>{ const tot=weeks.reduce((a,w)=>a+Math.min(habitWeekCount(q,w,h.id),h.perWeek),0); return `<div class="item"><span class="txt">${esc(h.name)}</span><span class="tag">${Math.round(tot/(4*h.perWeek)*100)}% of target</span></div>`; }).join('')}<div style="margin-top:10px">${ta(`${p}.habitChanges`)}</div>`)}
+    ${card('Goals','goals', `<p class="hint">Based on your goal progress, what optimizations and priorities do you need to commit to for next month?</p>${ta(`${p}.optim`)}`)}
+    ${card('Habits','habits', `<p class="hint">Based on the last ${weeks.length} weeks, what changes are needed to keep you on track? Should any habit be expanded or scaled back?</p>${q.habits.map(h=>{ const tot=weeks.reduce((a,w)=>a+Math.min(habitWeekCount(q,w,h.id),h.perWeek),0); return `<div class="item"><span class="txt">${esc(h.name)}</span><span class="tag">${Math.round(tot/(weeks.length*h.perWeek)*100)}% of target</span></div>`; }).join('')}<div style="margin-top:10px">${ta(`${p}.habitChanges`)}</div>`)}
     ${card('Go for a 10','mountain', `<p class="hint">Pick one area. Describe in detail what a 10 would look like for you — and why.</p>
       <select data-path="${p}.area" style="margin-bottom:8px" aria-label="Area"><option value="">Choose an area…</option>${AREAS.map(([a,l])=>`<option value="${a}" ${R.area===a?'selected':''}>${l}</option>`).join('')}</select>
       ${ta(`${p}.ten`,'A 10 looks like…')}
-      <p class="hint" style="margin-top:12px">How do you need to act, think, or “be” over the next 4 weeks to move closer to a 10?</p>${ta(`${p}.be`)}
+      <p class="hint" style="margin-top:12px">How do you need to act, think, or “be” over the next month to move closer to a 10?</p>${ta(`${p}.be`)}
       <p class="hint" style="margin-top:12px">What commitment excites you that aligns with this vision?</p>${ta(`${p}.excite`)}
       <p class="hint" style="margin-top:12px">What commitment do you feel the most resistance around?</p>${ta(`${p}.resist`)}`)}
-    <button class="btn block" data-action="month-done" data-q="${q.id}" data-m="${m}">${R.done?'Done — back to Review':'Complete 4-week reflection'}</button>`;
+    <button class="btn block" data-action="month-done" data-q="${q.id}" data-m="${m}">${R.done?'Done — back to Review':'Complete month reflection'}</button>`;
 }
 function vQuarterReview(q){
   if(!q) return '<p class="empty">Not found.</p>';
   const qi=S.quarters.indexOf(q), qn=qNum(q), st=qState(q);
   const goals=q.goals.filter(g=>g.title).map(g=>{ const pr=goalProg(g,q); return `<div class="ybar"><div class="top-l">${esc(g.title)}<span>${pr.label}</span></div><div class="bar"><i style="width:${pr.pct*100}%"></i></div></div>`; }).join('');
   const habits=q.habits.map(h=>`<div class="item"><span class="txt">${esc(h.name)}</span><span class="tag">${Math.round(habitQuarterPct(q,h)*100)}%</span></div>`).join('');
-  return `<a class="link" href="#/review">‹ Review</a><h1>Quarter ${qn} review</h1><p class="sub">${fmtShort(q.start)} – ${fmtShort(qLast(q))} · ${st==='closed'?'Complete':st==='ended'?'Your 12 weeks are done':'In progress — complete this after week 12'}</p>
-    ${card('Results','insights', `<div class="sumgrid"><div><b>${callsIn(q.start,qEnd(q))}</b><span>Calls</span></div><div><b>${fmtMoney(salesIn(q.start,qEnd(q)))}</b><span>Sales</span></div><div><b>${Object.values(S.reviews.weeks[q.id]||{}).filter(r=>r.done).length}/12</b><span>Weekly reviews</span></div></div>`)}
+  return `<a class="link" href="#/review">‹ Review</a><h1>Quarter ${qn} review</h1><p class="sub">${fmtShort(q.start)} – ${fmtShort(qLast(q))} · ${st==='closed'?'Complete':st==='ended'?'Your quarter is done':`In progress — complete this after week ${qWeeks(q)}`}</p>
+    ${card('Results','insights', `<div class="sumgrid"><div><b>${callsIn(q.start,qEnd(q))}</b><span>Calls</span></div><div><b>${fmtMoney(salesIn(q.start,qEnd(q)))}</b><span>Sales</span></div><div><b>${Object.values(S.reviews.weeks[q.id]||{}).filter(r=>r.done).length}/${qWeeks(q)}</b><span>Weekly reviews</span></div></div>`)}
     ${card('Goals','goals', goals||'<p class="empty">No goals</p>')}
     ${card('Habit consistency','habits', habits||'<p class="empty">No habits</p>')}
-    ${card('Life ratings by week','heart', ratingsTable(q,[...Array(12)].map((_,i)=>i),true))}
+    ${card('Life ratings by week','heart', ratingsTable(q,[...Array(qWeeks(q))].map((_,i)=>i),true))}
     ${card('Reflect','pen', `<p class="hint">What are you most proud of?</p>${ta(`quarters.${qi}.review.proud`)}<p class="hint" style="margin-top:12px">What worked? Keep doing it.</p>${ta(`quarters.${qi}.review.worked`)}<p class="hint" style="margin-top:12px">What didn’t? What will you change next quarter?</p>${ta(`quarters.${qi}.review.didnt`)}`)}
-    ${st==='closed'?'':`<button class="btn block" data-action="quarter-close" data-q="${q.id}">${qn>=4?'Close quarter & review the year →':'Close quarter & plan next 12 weeks →'}</button>${st!=='ended'?'<p class="hint" style="text-align:center;margin-top:8px">You’re still inside these 12 weeks. Closing now ends the quarter early.</p>':''}`}`;
+    ${st==='closed'?'':`<button class="btn block" data-action="quarter-close" data-q="${q.id}">${qn>=4?'Close quarter & review the year →':'Close quarter & plan the next one →'}</button>${st!=='ended'?'<p class="hint" style="text-align:center;margin-top:8px">You’re still inside this quarter. Closing now ends the quarter early.</p>':''}`}`;
 }
 function vYearReview(y){
   if(!y) return '<p class="empty">Not found.</p>';
@@ -844,23 +865,23 @@ function vYearReview(y){
 
 const planOK = R => !!R && !!R.planDone;
 function vMonthReview(q,m){
-  if(!q||m==null||isNaN(m)||m<0||m>2) return '<p class="empty">Not found.</p>';
-  const R=mrevE(q,m), p=`reviews.months.${q.id}.${m}`, weeks=[0,1,2,3].map(i=>m*4+i), t=todayK();
+  if(!q||m==null||isNaN(m)||m<0||m>=monthsOf(q).length) return '<p class="empty">Not found.</p>';
+  const MS=monthsOf(q), M=MS[m], R=mrevE(q,m), p=`reviews.months.${q.id}.${m}`, weeks=M.weeks, t=todayK();
   if(R.done) return monthFull(q,m);
-  const opens=addDays(wStart(q,m*4+3),6);
+  const opens=addDays(wStart(q,M.last),6);
   const txt = v => !!(v||'').trim();
-  const head=`<a class="link" href="#/review">‹ Review</a><h1>Month ${m+1} of 3</h1><p class="sub">Weeks ${m*4+1}–${m*4+4} · ${fmtShort(wStart(q,m*4))} – ${fmtShort(addDays(wStart(q,m*4),27))}</p>`;
+  const head=`<a class="link" href="#/review">‹ Review</a><h1>${M.name}</h1><p class="sub">Month ${m+1} of ${MS.length} · ${weeks.length} weeks (${M.first+1}–${M.last+1}) · ${fmtShort(wStart(q,M.first))} – ${fmtShort(addDays(wStart(q,M.last),6))}</p>`;
   const phase = planOK(R) ? 'reflect' : 'plan';
   const secs = phase==='plan' ? [
-    {title:'My vision for these 4 weeks', icon:'eye', body:ta(`${p}.focus`,'What does a great month look like?','tall'), ok:()=>txt(R.focus), need:'Write your vision to move on'},
+    {title:`My vision for ${M.name}`, icon:'eye', body:ta(`${p}.focus`,'What does a great month look like?','tall'), ok:()=>txt(R.focus), need:'Write your vision to move on'},
     {title:'Most important this month', icon:'star', body:`<p class="hint">The 3 things that matter most for your quarterly goals.</p>`+[0,1,2].map(i=>`<div class="item"><span class="num">${i+1}</span>${inp(`${p}.top.${i}`)}</div>`).join(''), ok:()=>R.top.some(txt), need:'Add at least one priority to move on'},
     {title:'Week by week', icon:'review', body:weeks.map((w,i)=>`<div class="item"><span class="tag">W${w+1}</span>${inp(`${p}.weekFocus.${i}`,`Focus for week of ${fmtShort(wStart(q,w))}`)}</div>`).join('')+`<label class="f">Notes</label>${ta(`${p}.notes`)}`},
   ] : [
-    {title:'Life ratings, last 4 weeks', icon:'heart', body:`<p class="hint">Averaged from your weekly reviews. Are they rising, falling, or holding steady?</p>${ratingsTable(q,weeks)}`},
-    {title:'Goals', icon:'goals', body:`<p class="hint">Based on your goal progress, what optimizations and priorities do you need to commit to for the next 4 weeks?</p>${q.goals.filter(g=>g.title).map(g=>{ const pr=goalProg(g,q); return `<div class="ybar"><div class="top-l">${esc(g.title)}<span>${pr.label}</span></div><div class="bar pace"><i style="width:${pr.pct*100}%"></i><b style="left:${(m*4+4)/12*100}%"></b></div></div>`; }).join('')}<div style="margin-top:12px">${ta(`${p}.optim`)}</div>`, ok:()=>txt(R.optim), need:'Write your answer to move on'},
-    {title:'Habits', icon:'habits', body:`<p class="hint">Based on the last 4 weeks, what changes are needed to keep you on track? Should any habit be expanded or scaled back?</p>${q.habits.map(h=>{ const tot=weeks.reduce((a,w)=>a+Math.min(habitWeekCount(q,w,h.id),h.perWeek),0); return `<div class="item"><span class="txt">${esc(h.name)}</span><span class="tag">${Math.round(tot/(4*h.perWeek)*100)}% of target</span></div>`; }).join('')}<div style="margin-top:10px">${ta(`${p}.habitChanges`)}</div>`, ok:()=>txt(R.habitChanges), need:'Write your answer to move on'},
+    {title:`Life ratings, last ${weeks.length} weeks`, icon:'heart', body:`<p class="hint">Averaged from your weekly reviews. Are they rising, falling, or holding steady?</p>${ratingsTable(q,weeks)}`},
+    {title:'Goals', icon:'goals', body:`<p class="hint">Based on your goal progress, what optimizations and priorities do you need to commit to for next month?</p>${q.goals.filter(g=>g.title).map(g=>{ const pr=goalProg(g,q); return `<div class="ybar"><div class="top-l">${esc(g.title)}<span>${pr.label}</span></div><div class="bar pace"><i style="width:${pr.pct*100}%"></i><b style="left:${(M.last+1)/qWeeks(q)*100}%"></b></div></div>`; }).join('')}<div style="margin-top:12px">${ta(`${p}.optim`)}</div>`, ok:()=>txt(R.optim), need:'Write your answer to move on'},
+    {title:'Habits', icon:'habits', body:`<p class="hint">Based on the last ${weeks.length} weeks, what changes are needed to keep you on track? Should any habit be expanded or scaled back?</p>${q.habits.map(h=>{ const tot=weeks.reduce((a,w)=>a+Math.min(habitWeekCount(q,w,h.id),h.perWeek),0); return `<div class="item"><span class="txt">${esc(h.name)}</span><span class="tag">${Math.round(tot/(weeks.length*h.perWeek)*100)}% of target</span></div>`; }).join('')}<div style="margin-top:10px">${ta(`${p}.habitChanges`)}</div>`, ok:()=>txt(R.habitChanges), need:'Write your answer to move on'},
     {title:'Go for a 10', icon:'mountain', body:`<p class="hint">Pick one area. Describe in detail what a 10 would look like for you — and why.</p><select data-path="${p}.area" data-rerender style="margin-bottom:8px" aria-label="Area"><option value="">Choose an area…</option>${AREAS.map(([a,l])=>`<option value="${a}" ${R.area===a?'selected':''}>${l}</option>`).join('')}</select>${ta(`${p}.ten`,'A 10 looks like…','tall')}`, ok:()=>!!R.area && txt(R.ten), need:'Pick an area and describe a 10 to move on'},
-    {title:'Act, think, be', icon:'eye', body:`<p class="hint">How do you need to act, think, or “be” over the next 4 weeks to move closer to a 10${R.area?' in '+AREAS.find(a=>a[0]===R.area)[1]:''}?</p>${ta(`${p}.be`,'','tall')}`, ok:()=>txt(R.be), need:'Write your answer to move on'},
+    {title:'Act, think, be', icon:'eye', body:`<p class="hint">How do you need to act, think, or “be” over the next month to move closer to a 10${R.area?' in '+AREAS.find(a=>a[0]===R.area)[1]:''}?</p>${ta(`${p}.be`,'','tall')}`, ok:()=>txt(R.be), need:'Write your answer to move on'},
     {title:'Commitments', icon:'star', body:`<p class="hint">What commitment excites you that aligns with this vision?</p>${ta(`${p}.excite`)}<p class="hint" style="margin-top:12px">What commitment do you feel the most resistance around?</p>${ta(`${p}.resist`)}`, ok:()=>txt(R.excite)&&txt(R.resist), need:'Answer both questions to finish'},
   ];
   const sk = phase==='plan'?'pstep':'rstep';
@@ -872,12 +893,12 @@ function vMonthReview(q,m){
   const early = phase==='reflect' && t<opens;
   return `${head}
     ${planSummary}
-    <div class="section-title">${phase==='plan'?'Plan your 4 weeks':'4-week reflection'}${early?`<span style="text-transform:none;letter-spacing:0;font-weight:500">best done ${fmtShort(opens)}</span>`:''}</div>
+    <div class="section-title">${phase==='plan'?`Plan ${M.name}`:`${M.name} reflection`}${early?`<span style="text-transform:none;letter-spacing:0;font-weight:500">best done ${fmtShort(opens)}</span>`:''}</div>
     <div class="steps">${secs.map((_,i)=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>
     <p class="hint" style="margin:-8px 0 12px">Step ${step+1} of ${secs.length}</p>
     ${card(sec.title, sec.icon, sec.body)}
     <div class="wiz-nav">${step>0?`<button class="btn ghost" data-action="mr-step" data-q="${q.id}" data-m="${m}" data-d="-1">Back</button>`:''}
-      <button class="btn" data-action="${last?(phase==='plan'?'mr-saveplan':'month-done'):'mr-step'}" data-q="${q.id}" data-m="${m}" data-d="1">${last?(phase==='plan'?'Save my plan ✓':'Complete 4-week reflection'):'Next: '+secs[step+1].title+' →'}</button></div>
+      <button class="btn" data-action="${last?(phase==='plan'?'mr-saveplan':'month-done'):'mr-step'}" data-q="${q.id}" data-m="${m}" data-d="1">${last?(phase==='plan'?'Save my plan ✓':'Complete month reflection'):'Next: '+secs[step+1].title+' →'}</button></div>
     ${step>0?`<div class="ci-chips" style="margin-top:14px">${secs.slice(0,step).map((x,i)=>`<button class="ci-chip" data-action="mr-goto" data-q="${q.id}" data-m="${m}" data-i="${i}">✓ ${x.title}</button>`).join('')}</div>`:''}`;
 }
 function monthNeed(q,m){ // validation for current step, reuses vMonthReview rules
@@ -888,14 +909,14 @@ function monthNeed(q,m){ // validation for current step, reuses vMonthReview rul
 
 /* ================= insights ================= */
 function vInsights(){
-  const q=curQuarter(); if(!q) return `<h1>Insights</h1><p class="empty">Plan your 12 weeks to see insights.</p>`;
-  const t=todayK(), cw=Math.max(0,Math.min(11,weekIdx(q,t))), y=yearById(q.yearId);
-  const weeks=[...Array(12)].map((_,w)=>{ const a=wStart(q,w), b=addDays(a,7); return {w,calls:callsIn(a,b),sales:salesIn(a,b)}; });
+  const q=curQuarter(); if(!q) return `<h1>Insights</h1><p class="empty">Plan your quarter to see insights.</p>`;
+  const t=todayK(), cw=Math.max(0,Math.min(qWeeks(q)-1,weekIdx(q,t))), y=yearById(q.yearId);
+  const weeks=[...Array(qWeeks(q))].map((_,w)=>{ const a=wStart(q,w), b=addDays(a,7); return {w,calls:callsIn(a,b),sales:salesIn(a,b)}; });
   let streak=0, k=t; if(!hasContent(peek(k))) k=addDays(k,-1); while(hasContent(peek(k))){ streak++; k=addDays(k,-1); }
   const mc=Math.max(1,...weeks.map(x=>x.calls)), ms=Math.max(1,...weeks.map(x=>x.sales));
   const bars=(key,max,fmt,alt)=>weeks.map(x=>`<span class="${x.w===cw?'cur':''}">W${x.w+1}</span><div class="track"><div class="fill ${alt?'alt':''}" style="width:${x[key]/max*100}%"></div></div><span class="val ${x.w===cw?'cur':''}">${fmt(x[key])}</span>`).join('');
   const grats=Object.keys(S.days).sort().reverse().flatMap(dk=>S.days[dk].grat.filter(Boolean).map(g=>({dk,g}))).slice(0,10);
-  return `<h1>Insights</h1><p class="sub">Year ${S.years.indexOf(y)+1} · Quarter ${qNum(q)} · Week ${cw+1} of 12</p>
+  return `<h1>Insights</h1><p class="sub">Year ${S.years.indexOf(y)+1} · Quarter ${qNum(q)} · Week ${cw+1} of ${qWeeks(q)}</p>
     <div class="stats">
       <div class="stat"><div class="k">Journal streak</div><div class="v">${streak}</div><div class="s">day${streak===1?'':'s'} in a row</div></div>
       <div class="stat"><div class="k">Habits this quarter</div><div class="v">${q.habits.length?Math.round(q.habits.reduce((a,h)=>a+habitQuarterPct(q,h),0)/q.habits.length*100)+'%':'—'}</div><div class="s">of weekly targets hit</div></div>
@@ -904,7 +925,7 @@ function vInsights(){
     </div>
     ${card('Calls by week','insights', `<div class="bars">${bars('calls',mc,n=>n)}</div>`)}
     ${card('Sales by week','insights', `<div class="bars">${bars('sales',ms,fmtMoney,true)}</div>`)}
-    ${card('Life ratings by week','heart', ratingsTable(q,[...Array(12)].map((_,i)=>i),true))}
+    ${card('Life ratings by week','heart', ratingsTable(q,[...Array(qWeeks(q))].map((_,i)=>i),true))}
     ${card('Gratitude','heart', grats.length?`<ul class="gratlist">${grats.map(x=>`<li><small>${fmtShort(x.dk)}</small>${esc(x.g)}</li>`).join('')}</ul>`:'<p class="empty">Your gratitude entries collect here.</p>')}`;
 }
 
@@ -913,7 +934,7 @@ function vSettings(){
   const q=curQuarter(), qi=S.quarters.indexOf(q);
   return `<h1>Settings</h1><p class="sub">&nbsp;</p>
     ${card('Profile','pen', `<label class="f" for="s-name" style="margin-top:0">Name</label>${inp('profile.name','','id="s-name"')}`)}
-    ${q&&!q.closed?card('Current 12 weeks','review', `<label class="f" for="s-qs" style="margin-top:0">Start date</label><input id="s-qs" type="date" data-path="quarters.${qi}.start" data-rerender value="${esc(q.start)}"><p class="hint" style="margin:8px 0 0">Ends ${fmtShort(qLast(q))}. To finish early, use the <a href="#/review/quarter/${q.id}">quarter review</a>.</p>`):''}
+    ${q&&!q.closed?card('Current quarter','review', `<div class="grid2"><div><label class="f" for="s-qs" style="margin-top:0">Start date</label><input id="s-qs" type="date" data-path="quarters.${qi}.start" data-rerender value="${esc(q.start)}"></div><div><label class="f" for="s-ql" style="margin-top:0">Length</label><select id="s-ql" data-path="quarters.${qi}.weeks" data-num data-rerender>${[11,12,13,14].map(n=>`<option value="${n}" ${qWeeks(q)===n?'selected':''}>${n} weeks</option>`).join('')}</select></div></div><p class="hint" style="margin:8px 0 0">${monthsOf(q).map(M=>`${M.name} (${M.weeks.length} wks)`).join(' · ')}</p><p class="hint" style="margin:8px 0 0">Ends ${fmtShort(qLast(q))}. To finish early, use the <a href="#/review/quarter/${q.id}">quarter review</a>.</p>`):''}
     ${card('Weekly review','review', `<p class="hint">Your weekly review becomes required at this time each week and must be finished before you can use the app.</p>
       <div class="grid2"><div><label class="f" for="s-rd" style="margin-top:0">Day</label><select id="s-rd" data-path="settings.reviewDay" data-num>${DAYNAMES.map((n,i)=>`<option value="${i}" ${+S.settings.reviewDay===i?'selected':''}>${n}</option>`).join('')}</select></div>
       <div><label class="f" for="s-rt" style="margin-top:0">Time</label><input id="s-rt" type="time" data-path="settings.reviewTime" value="${esc(S.settings.reviewTime)}"></div></div>`)}
@@ -938,6 +959,7 @@ main.addEventListener('change', e=>{
       if(!R.done && (R.step||0)===i && secs[i].ok()){ R.step=i+1; flush(); setTimeout(()=>{ render(); toast(secs[i].title+' ✓'); }, 250); return; } }
     if(t.dataset.rerender!==undefined) render(true); return;
   }
+  if(t.dataset.path==='draft.weeks' && S.draft) S.draft.weeksAuto=false;
   if(t.dataset.todoq){ const it=S.todo.find(x=>x.id===t.dataset.todoq); if(it){ it.q=t.value; save(); render(true); } return; }
   if(t.dataset.path && (t.dataset.rerender!==undefined || t.dataset.rerenderBlur!==undefined)) render(true);
 });
@@ -956,11 +978,11 @@ function act(a,b){
       if(D.kind==='year'){
         const goals=D.goals.filter(g=>g.title.trim()); if(!goals.length){ toast('Add at least one yearly goal',true); return; }
         S.years.push({id:uid(), start:D.start||todayK(), vision:D.vision, goals:goals.map(g=>({id:g.id,title:g.title.trim(),type:g.type,target:g.target,current:g.current||0})), closed:false});
-        S.draft=null; save(true); go('#/plan/quarter'); toast('Year set. Now plan your first 12 weeks.');
+        S.draft=null; save(true); go('#/plan/quarter'); toast('Year set. Now plan your first quarter.');
       } else {
         const goals=D.goals.filter(g=>g.title.trim()); if(!goals.length){ toast('Add at least one goal',true); return; }
-        S.quarters.push({id:uid(), yearId:D.yearId, start:D.start||todayK(), goals:goals.map(g=>({...g,title:g.title.trim(),milestones:(g.milestones||[]).filter(m=>m.text.trim())})), habits:D.habits.filter(h=>h.keep&&h.name.trim()).map(({keep,...h})=>h), closed:false, review:{}, createdAt:Date.now()});
-        S.draft=null; save(true); go('#/today'); toast('Your 12 weeks have started. Let’s go!');
+        S.quarters.push({id:uid(), yearId:D.yearId, start:D.start||todayK(), weeks:+D.weeks||suggestWeeks(D.start||todayK()), goals:goals.map(g=>({...g,title:g.title.trim(),milestones:(g.milestones||[]).filter(m=>m.text.trim())})), habits:D.habits.filter(h=>h.keep&&h.name.trim()).map(({keep,...h})=>h), closed:false, review:{}, createdAt:Date.now()});
+        S.draft=null; save(true); go('#/today'); toast('Your quarter has started. Let’s go!');
       }
       return;
     }
@@ -986,16 +1008,16 @@ function act(a,b){
       else { go('#/review'); toast(`Week ${w+1} review complete`); }
       return;
     }
-    case 'month-done': { const q=qById(ds.q), m=+ds.m, R=mrevE(q,m); if(!R.done){ const need=monthNeed(q,m); if(need){ toast(need,true); return; } } R.done=true; flush(); go('#/review'); toast('4-week reflection complete'); return; }
+    case 'month-done': { const q=qById(ds.q), m=+ds.m, R=mrevE(q,m); if(!R.done){ const need=monthNeed(q,m); if(need){ toast(need,true); return; } } R.done=true; flush(); go('#/review'); toast(monthsOf(q)[m].name+' reflection complete'); return; }
     case 'mr-step': { const q=qById(ds.q), m=+ds.m, R=mrevE(q,m), sk=planOK(R)?'rstep':'pstep'; if(+ds.d>0){ const need=monthNeed(q,m); if(need){ toast(need,true); return; } } R[sk]=Math.max(0,(R[sk]||0)+ +ds.d); flush(); render(); return; }
     case 'mr-goto': { const R=mrevE(qById(ds.q),+ds.m); R[planOK(R)?'rstep':'pstep']=+ds.i; flush(); render(); return; }
-    case 'mr-saveplan': { const q=qById(ds.q), m=+ds.m, R=mrevE(q,m); const need=monthNeed(q,m); if(need){ toast(need,true); return; } R.planDone=true; R._editing=false; R.rstep=R.rstep||0; flush(); go('#/review'); toast('Month '+(m+1)+' plan saved'); return; }
+    case 'mr-saveplan': { const q=qById(ds.q), m=+ds.m, R=mrevE(q,m); const need=monthNeed(q,m); if(need){ toast(need,true); return; } R.planDone=true; R._editing=false; R.rstep=R.rstep||0; flush(); go('#/review'); toast(monthsOf(q)[m].name+' plan saved'); return; }
     case 'mr-editplan': { const R=mrevE(qById(ds.q),+ds.m); R.planDone=false; R.focus=R.focus||''; R.pstep=0; R._editing=true; flush(); render(); return; }
     case 'quarter-close': {
       const q=qById(ds.q); if(qState(q)!=='ended' && !confirm('End this quarter early, today?')) return;
       q.closed=true; if(qState(q)!=='ended' && todayK()<qEnd(q)) q.closedOn=todayK(); const y=yearById(q.yearId); S.draft=null; save(true);
       if(quartersOf(y).length>=4){ go(`#/review/year/${y.id}`); toast('Quarter closed. Time to review your year.'); }
-      else { go('#/plan/quarter'); toast('Quarter closed. Plan your next 12 weeks.'); }
+      else { go('#/plan/quarter'); toast('Quarter closed. Plan your next quarter.'); }
       return;
     }
     case 'year-close': { yearById(ds.y).closed=true; S.draft=null; save(true); go('#/plan/year'); toast('Year closed. Set your new year’s goals.'); return; }
