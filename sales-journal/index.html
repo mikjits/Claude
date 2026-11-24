@@ -739,6 +739,19 @@ function ratingsTable(q,weeks,short){
     let tr='—',cls=''; if(got.length>=2){ const dl=got[got.length-1]-got[0]; if(dl>0){tr='↑';cls='trend-up';} else if(dl<0){tr='↓';cls='trend-down';} else tr='→'; }
     return `<tr><td>${l}</td>${vals.map(v=>`<td>${v??'·'}</td>`).join('')}<td><b>${avg?avg.toFixed(1):'—'}</b></td><td class="${cls}">${tr}</td></tr>`; }).join('')}</tbody></table></div>`;
 }
+function weekSections(q,w){
+  const R=wrevE(q,w);
+  const all=(arr,key)=>()=>arr.every((_,i)=>R[key]?.[i]);
+  return [
+    {key:'week', title:'Your week', icon:'insights', hint:'a quick look back'},
+    {key:'clear', title:'Get clear', icon:'cloud', ok:all(CLEAR,'clear'), need:'Check off every step to move on'},
+    {key:'current', title:'Get current', icon:'list', ok:all(CURRENT,'current'), need:'Check off every step to move on'},
+    {key:'creative', title:'Get creative', icon:'star', ok:all(CREATIVE,'creative'), need:'Check off every step to move on'},
+    {key:'goals', title:'Goals & habits', icon:'goals', meta:'tick = on pace', hint:'check off milestones you hit'},
+    {key:'rate', title:'Rate your week', icon:'heart', ok:()=>AREAS.every(([a])=>R.ratings?.[a]), need:'Rate all 5 areas to move on'},
+    {key:'wins', title:'Wins & lessons', icon:'pen', hint:'last step'},
+  ];
+}
 function vWeekReview(q,w,lockedMode){
   if(!q||w==null||isNaN(w)||w<0||w>11) return '<p class="empty">Review not found.</p>';
   const R=wrevE(q,w), p=`reviews.weeks.${q.id}.${w}`, qi=S.quarters.indexOf(q);
@@ -749,18 +762,37 @@ function vWeekReview(q,w,lockedMode){
       ${open.slice(0,4).map(({m,j})=>`<label class="check" style="padding:6px 0 0;border:0">${chk(`quarters.${qi}.goals.${i}.milestones.${j}.done`)}<div><span style="color:var(--ink);font-size:14px">${esc(m.text)}</span>${m.week?` <span class="tag ${+m.week<=w+1?'warn':''}">Wk ${esc(m.week)}</span>`:''}</div></label>`).join('')}</div>`; }).join('');
   const habits=q.habits.map(h=>{ const n=habitWeekCount(q,w,h.id); return `<div class="item"><span class="txt">${esc(h.name)}</span><span class="tag ${n>=h.perWeek?'ok':'warn'}">${n}/${h.perWeek}${n>=h.perWeek?' ✓':''}</span></div>`; }).join('');
   const rates=AREAS.map(([a,l])=>`<div class="rate-row"><div class="lbl">${l}</div><div class="rates">${[...Array(10)].map((_,i)=>`<button class="rate ${R.ratings?.[a]===i+1?'on':''}" data-action="rate" data-q="${q.id}" data-w="${w}" data-a="${a}" data-v="${i+1}">${i+1}</button>`).join('')}</div>${inp(`${p}.why.${a}`,'Why?')}</div>`).join('');
-  const miss=reviewMissing(q,w);
-  return `${lockedMode?'':'<a class="link" href="#/review">‹ Review</a>'}<h1>Week ${w+1} review</h1><p class="sub">${fmtShort(wStart(q,w))} – ${fmtShort(addDays(wStart(q,w),6))} ${R.done?'· <span class="tag ok">Complete</span>':''}</p>
+  const creative = list(CREATIVE,'creative')+`<details class="more"><summary>Your Someday list (${S.someday.length})</summary><div>${somedayBlock()}</div></details><details class="more"><summary>Your to-do list (${S.todo.filter(x=>!x.done).length} open)</summary><div>${S.todo.filter(x=>!x.done).map(it=>todoRow(it,todayK())).join('')||'<p class="empty">Empty</p>'}<div class="addrow"><input type="text" id="todo-new" placeholder="Add to next week’s to-do list" data-enter="todo-add"><input type="hidden" id="todo-q" value=""><button class="btn sm ghost" data-action="todo-add">Add</button></div></div></details>`;
+  const head = `${lockedMode?'':'<a class="link" href="#/review">‹ Review</a>'}<h1>Week ${w+1} review</h1><p class="sub">${fmtShort(wStart(q,w))} – ${fmtShort(addDays(wStart(q,w),6))} ${R.done?'· <span class="tag ok">Complete</span>':''}</p>`;
+  if(R.done){
+    return `${head}
     ${card('Your week','insights', weekSummary(q,w))}
     ${card('Get clear','cloud', list(CLEAR,'clear'))}
     ${card('Get current','list', list(CURRENT,'current'))}
-    ${card('Get creative','star', list(CREATIVE,'creative')+`<details class="more"><summary>Your Someday list (${S.someday.length})</summary><div>${somedayBlock()}</div></details><details class="more"><summary>Your to-do list (${S.todo.filter(x=>!x.done).length} open)</summary><div>${S.todo.filter(x=>!x.done).map(it=>todoRow(it,todayK())).join('')||'<p class="empty">Empty</p>'}<div class="addrow"><input type="text" id="todo-new" placeholder="Add to next week’s to-do list" data-enter="todo-add"><input type="hidden" id="todo-q" value=""><button class="btn sm ghost" data-action="todo-add">Add</button></div></div></details>`)}
+    ${card('Get creative','star', creative)}
     ${card('Goal progress','goals', goals||'<p class="empty">No goals.</p>', 'tick = on pace')}
     ${card('Habits this week','habits', habits||'<p class="empty">No habits.</p>')}
     ${card('Rate your week','heart', rates)}
     ${card('Wins & lessons','pen', ta(`${p}.wins`,'What went well? What did you learn? What will you do differently next week?'))}
-    ${miss.length&&!R.done?`<p class="hint" style="text-align:center">Still to do: ${miss.join(' and ')}</p>`:''}
-    <button class="btn block" data-action="week-done" data-q="${q.id}" data-w="${w}" ${miss.length&&!R.done?'aria-disabled="true" style="opacity:.55"':''}>${R.done?'Done — back to Review':`Complete week ${w+1} review`}</button>`;
+    <button class="btn block" data-action="week-done" data-q="${q.id}" data-w="${w}">Done — back to Review</button>`;
+  }
+  const secs = weekSections(q,w);
+  const step = Math.max(0, Math.min(secs.length-1, R.step||0)), sec = secs[step];
+  const bodies = {week:weekSummary(q,w), clear:list(CLEAR,'clear'), current:list(CURRENT,'current'), creative,
+    goals:`${goals||'<p class="empty">No goals.</p>'}<div class="section-title" style="margin:18px 0 6px">Habits this week</div>${habits||'<p class="empty">No habits.</p>'}`,
+    rate:rates, wins:ta(`${p}.wins`,'What went well? What did you learn? What will you do differently next week?','tall')};
+  const ok = sec.ok ? sec.ok() : true;
+  const doneChips = secs.slice(0,step).map((x,i)=>`<button class="ci-chip" data-action="wr-goto" data-q="${q.id}" data-w="${w}" data-i="${i}">✓ ${x.title}</button>`).join('');
+  return `${head}
+    <div class="steps">${secs.map((_,i)=>`<i class="${i<=step?'on':''}"></i>`).join('')}</div>
+    <p class="hint" style="margin:-8px 0 12px">Step ${step+1} of ${secs.length}${sec.hint?' · '+sec.hint:''}</p>
+    ${card(sec.title, sec.icon, bodies[sec.key], sec.meta||'')}
+    ${!ok?`<p class="hint" style="text-align:center">${sec.need}</p>`:''}
+    <div class="wiz-nav">${step>0?`<button class="btn ghost" data-action="wr-step" data-q="${q.id}" data-w="${w}" data-d="-1">Back</button>`:''}
+      ${step<secs.length-1
+        ? `<button class="btn" data-action="wr-step" data-q="${q.id}" data-w="${w}" data-d="1" ${ok?'':'aria-disabled="true" style="opacity:.55"'}>Next: ${secs[step+1].title} →</button>`
+        : `<button class="btn" data-action="week-done" data-q="${q.id}" data-w="${w}">Complete week ${w+1} review</button>`}</div>
+    ${doneChips?`<div class="ci-chips" style="margin-top:14px">${doneChips}</div>`:''}`;
 }
 function vMonthReview(q,m){
   if(!q||m==null||isNaN(m)||m<0||m>2) return '<p class="empty">Not found.</p>';
@@ -856,7 +888,13 @@ main.addEventListener('input', e=>{
 main.addEventListener('change', e=>{
   const t=e.target;
   if(t.type==='checkbox' && t.dataset.action){ act(t.dataset.action,t); return; }
-  if(t.dataset.path && t.type==='checkbox'){ setP(t.dataset.path,t.checked); save(); if(t.dataset.rerender!==undefined) render(true); return; }
+  if(t.dataset.path && t.type==='checkbox'){
+    setP(t.dataset.path,t.checked); save();
+    const m=t.dataset.path.match(/^reviews\.weeks\.([^.]+)\.(\d+)\.(clear|current|creative)\./);
+    if(m && t.checked){ const q=qById(m[1]), w=+m[2], R=wrevE(q,w), secs=weekSections(q,w), i=secs.findIndex(x=>x.key===m[3]);
+      if(!R.done && (R.step||0)===i && secs[i].ok()){ R.step=i+1; flush(); setTimeout(()=>{ render(); toast(secs[i].title+' ✓'); }, 250); return; } }
+    if(t.dataset.rerender!==undefined) render(true); return;
+  }
   if(t.dataset.todoq){ const it=S.todo.find(x=>x.id===t.dataset.todoq); if(it){ it.q=t.value; save(); render(true); } return; }
   if(t.dataset.path && (t.dataset.rerender!==undefined || t.dataset.rerenderBlur!==undefined)) render(true);
 });
@@ -916,6 +954,12 @@ function act(a,b){
     case 'year-close': { yearById(ds.y).closed=true; S.draft=null; save(true); go('#/plan/year'); toast('Year closed. Set your new year’s goals.'); return; }
     case 'todo-add': { const n=document.getElementById('todo-new'), q=document.getElementById('todo-q'); if(!n.value.trim()) return; S.todo.push({id:uid(),text:n.value.trim(),done:false,q:q.value}); save(); render(true); document.getElementById('todo-new')?.focus(); return; }
     case 'todo-done': { const it=S.todo.find(x=>x.id===ds.id); if(it){ it.done=!it.done; save(); render(true); } return; }
+    case 'wr-step': {
+      const q=qById(ds.q), w=+ds.w, R=wrevE(q,w), secs=weekSections(q,w), cur=Math.max(0,Math.min(secs.length-1,R.step||0));
+      if(+ds.d>0 && secs[cur].ok && !secs[cur].ok()){ toast(secs[cur].need, true); return; }
+      R.step=Math.max(0,Math.min(secs.length-1,cur+ +ds.d)); flush(); render(); return;
+    }
+    case 'wr-goto': { const R=wrevE(qById(ds.q),+ds.w); R.step=+ds.i; flush(); render(); return; }
     case 'ci-save': {
       const d=day(ds.k); d.answered ||= {};
       const ok = ds.s==='grat'? d.grat.some(x=>x.trim()) : ds.s==='focus'? !!(d.focus||'').trim() : !!(d.journal||'').trim();
