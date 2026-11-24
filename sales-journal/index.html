@@ -261,6 +261,10 @@ body.locked{padding-bottom:24px}
 body.locked .icon-btn[href]{display:none}
 .qsel{width:auto;padding:4px 6px;font-size:12px;border-radius:8px;flex:none}
 @media (max-width:420px){.tab{font-size:10px}.tab svg{width:21px;height:21px}}
+.ci-chips{display:flex;gap:6px;flex-wrap:wrap}
+.ci-chip{border:0;background:var(--accent-2);color:var(--accent);font-weight:700;font-size:12.5px;border-radius:99px;padding:5px 11px}
+.ci-done{padding:12px 16px}
+.ci-done .ci-chips{margin-top:10px}
 #toast{position:fixed;left:50%;bottom:calc(88px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(10px);background:var(--ink);color:var(--card);padding:8px 16px;border-radius:99px;font-size:13.5px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;z-index:50;max-width:calc(100% - 32px);text-align:center}
 #toast.show{opacity:.95;transform:translateX(-50%)}
 #toast.err{background:var(--danger);color:#fff}
@@ -473,6 +477,28 @@ function route(){
 }
 const main=document.getElementById('main');
 let locked=null;
+let editing=null;
+function checkin(k,d,p){
+  d.answered ||= {};
+  const prompt = PROMPTS[parseK(k).getDate()%PROMPTS.length];
+  const steps=[
+    {key:'grat', label:'Grateful', icon:'heart', q:'What are three things you’re grateful for today?',
+      body:[0,1,2].map(i=>`<div class="item"><span class="num">${i+1}</span>${inp(`${p}.grat.${i}`, i===0?'Something or someone you’re grateful for':'')}</div>`).join(''),
+      ok:()=>d.grat.some(x=>x.trim())},
+    {key:'focus', label:'Vision', icon:'eye', q:'What’s your vision for today?',
+      body:inp(`${p}.focus`,'Today I want to…'), ok:()=>!!(d.focus||'').trim()},
+    {key:'journal', label:'Journal', icon:'book', q:prompt,
+      body:ta(`${p}.journal`,'Write freely…','tall'), ok:()=>!!(d.journal||'').trim(), skip:true},
+  ];
+  const done = steps.filter(s=>d.answered[s.key] && editing!==s.key);
+  const cur = steps.find(s=>editing===s.key) || steps.find(s=>!d.answered[s.key]);
+  const chips = done.length ? `<div class="ci-chips">${done.map(s=>`<button class="ci-chip" data-action="ci-edit" data-s="${s.key}" title="Tap to view or edit">${d.answered[s.key]==='skipped'?'–':'✓'} ${s.label}</button>`).join('')}</div>` : '';
+  if(!cur) return `<section class="card ci-done"><div class="card-h" style="margin:0"><span class="ic">✓</span><h2>Daily check-in complete</h2></div>${chips}</section>`;
+  const n = steps.indexOf(cur)+1;
+  return `<section class="card ci"><div class="card-h"><span class="ic">${I[cur.icon]}</span><h2>${esc(cur.q)}</h2><span class="meta">${n} of 3</span></div>
+    ${cur.body}
+    <div class="row" style="margin-top:12px">${chips}<span class="spacer"></span>${cur.skip&&!cur.ok()?`<button class="btn sm ghost" data-action="ci-skip" data-k="${k}" data-s="${cur.key}">Skip today</button>`:''}<button class="btn sm" data-action="ci-save" data-k="${k}" data-s="${cur.key}">${editing===cur.key?'Done':'Save'}</button></div></section>`;
+}
 function render(keep){
   const y=window.scrollY, r=route();
   const pend = S.profile.name && S.years.length ? pendingReview() : null;
@@ -496,7 +522,7 @@ function render(keep){
   document.getElementById('tabs').innerHTML = hide?'':`<div class="wrap">${tabs.map(([k,l])=>`<a class="tab ${r.v===k?'on':''}" href="#/${k}">${I[k]}<span>${l}</span>${k==='review'&&due?'<span class="dot"></span>':''}</a>`).join('')}</div>`;
   window.scrollTo(0, keep?y:0);
 }
-window.addEventListener('hashchange', ()=>render());
+window.addEventListener('hashchange', ()=>{ editing=null; render(); });
 const go = h => { if(location.hash===h) render(); else location.hash=h; };
 
 /* ================= onboarding & planning ================= */
@@ -603,10 +629,8 @@ function vToday({k}){
     <div class="stat"><div class="k">Sales</div><label class="money"><span>$</span><input type="text" inputmode="decimal" data-path="${p}.sales" value="${val(p+'.sales')}" placeholder="0" aria-label="Sales in dollars" data-rerender-blur></label>${pace('sales','sales')}</div>
   </div>
   ${card('Habits','habits', habits.length?habitRows:'<p class="empty">No habits this quarter.</p>', '<a class="link" href="#/habits">Manage</a>')}
-  ${card('Grateful for','heart', [0,1,2].map(i=>`<div class="item"><span class="num">${i+1}</span>${inp(`${p}.grat.${i}`, i===0?'Something or someone you’re grateful for':'')}</div>`).join(''))}
-  ${card('Today’s vision','eye', inp(`${p}.focus`,'Today I want to…'))}
+  ${checkin(k,d,p)}
   ${card('Top 3 tasks','star', [0,1,2].map(i=>`<div class="item ${d.mits[i]?.done?'done':''}">${chk(`${p}.mits.${i}.done`)}${inp(`${p}.mits.${i}.text`, i===0?'The one thing that matters most today':'')}</div>`).join(''), '<a class="link" href="#/todo">From to-do ›</a>')}
-  ${card('Journal','book', `<p class="hint">Prompt: ${esc(PROMPTS[parseK(k).getDate()%PROMPTS.length])}</p>${ta(`${p}.journal`,'Write freely…','tall')}`)}
   <a class="banner info" href="#/todo"><div><b>To-do list · ${S.todo.filter(x=>!x.done).length} open</b><span>Pick today’s top 3 from your master list</span></div><span class="go">›</span></a>`;
 }
 
@@ -892,6 +916,14 @@ function act(a,b){
     case 'year-close': { yearById(ds.y).closed=true; S.draft=null; save(true); go('#/plan/year'); toast('Year closed. Set your new year’s goals.'); return; }
     case 'todo-add': { const n=document.getElementById('todo-new'), q=document.getElementById('todo-q'); if(!n.value.trim()) return; S.todo.push({id:uid(),text:n.value.trim(),done:false,q:q.value}); save(); render(true); document.getElementById('todo-new')?.focus(); return; }
     case 'todo-done': { const it=S.todo.find(x=>x.id===ds.id); if(it){ it.done=!it.done; save(); render(true); } return; }
+    case 'ci-save': {
+      const d=day(ds.k); d.answered ||= {};
+      const ok = ds.s==='grat'? d.grat.some(x=>x.trim()) : ds.s==='focus'? !!(d.focus||'').trim() : !!(d.journal||'').trim();
+      if(!ok){ toast('Write an answer first', true); return; }
+      d.answered[ds.s]=true; editing=null; flush(); render(true); return;
+    }
+    case 'ci-skip': { const d=day(ds.k); d.answered ||= {}; d.answered[ds.s]='skipped'; editing=null; flush(); render(true); return; }
+    case 'ci-edit': editing=ds.s; render(true); return;
     case 'todo-someday': { const it=S.todo.find(x=>x.id===ds.id); if(it){ S.someday.push({id:uid(),text:it.text}); S.todo=S.todo.filter(x=>x.id!==ds.id); save(true); render(true); toast('Moved to Someday'); } return; }
     case 'todo-del': S.todo=S.todo.filter(x=>x.id!==ds.id); save(); render(true); return;
     case 'todo-clear': S.todo=S.todo.filter(x=>!x.done); save(); render(true); return;
